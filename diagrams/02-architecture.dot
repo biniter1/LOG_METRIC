@@ -1,0 +1,46 @@
+digraph G {
+  rankdir=LR; compound=true; newrank=true;
+  graph [fontname="DejaVu Sans", fontsize=13, pad=0.3, nodesep=0.3, ranksep=0.55, bgcolor="white"];
+  node  [fontname="DejaVu Sans", fontsize=11, shape=box, style="rounded,filled", fillcolor="white", color="#888780"];
+  edge  [fontname="DejaVu Sans", fontsize=9, color="#5F5E5A"];
+
+  subgraph cluster_src {
+    label=<<b>Workload (namespace demo)</b>>; style="rounded,filled"; fillcolor="#F1EFE8"; color="#B4B2A9";
+    app [label="Pods\n/metrics + stdout logs"];
+  }
+
+  subgraph cluster_metrics {
+    label=<<b>Làn METRICS — VictoriaMetrics cluster</b>>; style="rounded,filled"; fillcolor="#EEEDFE"; color="#7F77DD";
+    vmagent [label="vmagent x2\nactive-active\nbuffer PVC"];
+    vminsert [label="vminsert x2\nhash + RF=2"];
+    vmstorage [label="vmstorage x3\ndedup khi merge\nPDB maxUnavailable=1"];
+    vmselect [label="vmselect x2\ndedup khi query"];
+    vmbackup [label="vmbackup sidecar\nmỗi 15 phút", fillcolor="#FAEEDA", color="#BA7517"];
+    vmagent -> vminsert [label="remote write"];
+    vminsert -> vmstorage [label="mỗi sample → 2 node"];
+    vmstorage -> vmselect [dir=back];
+    vmstorage -> vmbackup [arrowhead=none, style=dashed];
+  }
+
+  subgraph cluster_logs {
+    label=<<b>Làn LOGS — VictoriaLogs</b>>; style="rounded,filled"; fillcolor="#E1F5EE"; color="#1D9E75";
+    vlagent [label="vlagent DaemonSet\ncollector + replicator\ncheckpoint + buffer/URL"];
+    vla [label="vlogs-a\n(bản đầy đủ #1)"];
+    vlb [label="vlogs-b\n(bản đầy đủ #2)"];
+    vlbackup [label="rclone sidecar\nsnapshot/partition", fillcolor="#FAEEDA", color="#BA7517"];
+    vlagent -> vla; vlagent -> vlb;
+    vla -> vlbackup [arrowhead=none, style=dashed];
+    vlb -> vlbackup [arrowhead=none, style=dashed];
+  }
+
+  s3 [label="S3 (MinIO trong lab)\nvm-backups / vl-backups", shape=cylinder, fillcolor="#FAEEDA", color="#BA7517"];
+  vmbackup -> s3 [color="#BA7517"]; vlbackup -> s3 [color="#BA7517"];
+
+  vmauth [label="vmauth x2\nMỘT endpoint đọc\nlogs: first_available A→B", fillcolor="#F1EFE8"];
+  consumers [label="Grafana\nTier 1 (đọc traffic)", fillcolor="#F1EFE8"];
+
+  app -> vmagent [label="scrape 15s"];
+  app -> vlagent [label="tail /var/log/containers"];
+  vmselect -> vmauth; vla -> vmauth; vlb -> vmauth [style=dashed, label="failover"];
+  vmauth -> consumers;
+}

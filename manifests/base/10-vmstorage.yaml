@@ -1,0 +1,130 @@
+# vmstorage x3 - tầng lưu trữ metrics.
+#  - replicationFactor=2 được đặt ở vminsert: mỗi sample nằm trên 2 node khác nhau.
+#  - dedup.minScrapeInterval=15s: gộp bản trùng do 2 vmagent gửi, khi merge nền.
+#  - initContainer: tự restore từ S3 nếu volume trống (self-recovery).
+#  - sidecar vmbackup: backup incremental lên S3 mỗi 15 phút.
+apiVersion: v1
+kind: Service
+metadata:
+  name: vmstorage
+  labels: {app: vmstorage}
+spec:
+  clusterIP: None
+  # Giữ DNS record kể cả khi pod chưa Ready -> vminsert/vmselect vẫn resolve được
+  # tên node, tự đánh dấu node đó unavailable thay vì lỗi DNS.
+  publishNotReadyAddresses: true
+  selector: {app: vmstorage}
+  ports:
+    - {name: http, port: 8482}
+    - {name: vminsert, port: 8400}
+    - {name: vmselect, port: 8401}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vmstorage
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: {app: vmstorage}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vmstorage
+spec:
+  serviceName: vmstorage
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: {app: vmstorage}
+  template:
+    metadata:
+      labels: {app: vmstorage}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8482"
+    spec:
+      terminationGracePeriodSeconds: 60
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: {app: vmstorage}
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: restore-if-empty
+          image: victoriametrics/vmrestore
+          command: ["/bin/sh", "/scripts/vm-restore-if-empty.sh"]
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: BACKUP_BUCKET
+              value: vm-backups
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: s3-credentials, key: AWS_ACCESS_KEY_ID}}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: s3-credentials, key: AWS_SECRET_ACCESS_KEY}}
+            - name: AWS_REGION
+              valueFrom: {secretKeyRef: {name: s3-credentials, key: AWS_REGION}}
+            - name: S3_ENDPOINT
+              valueFrom: {secretKeyRef: {name: s3-credentials, key: S3_ENDPOINT}}
+          volumeMounts:
+            - {name: storage, mountPath: /storage}
+            - {name: scripts, mountPath: /scripts}
+      containers:
+        - name: vmstorage
+          image: victoriametrics/vmstorage
+          args:
+            - -storageDataPath=/storage
+            - -retentionPeriod=7d
+            - -dedup.minScrapeInterval=15s
+            - -loggerFormat=json
+          ports:
+            - {name: http, containerPort: 8482}
+            - {name: vminsert, containerPort: 8400}
+            - {name: vmselect, containerPort: 8401}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: http}
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: storage, mountPath: /storage}
+        - name: vmbackup
+          image: victoriametrics/vmbackup
+          command: ["/bin/sh", "/scripts/vm-backup-loop.sh"]
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: BACKUP_BUCKET
+              value: vm-backups
+            - name: BACKUP_INTERVAL_SECONDS
+              value: "900"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: s3-credentials, key: AWS_ACCESS_KEY_ID}}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: s3-credentials, key: AWS_SECRET_ACCESS_KEY}}
+            - name: AWS_REGION
+              valueFrom: {secretKeyRef: {name: s3-credentials, key: AWS_REGION}}
+            - name: S3_ENDPOINT
+              valueFrom: {secretKeyRef: {name: s3-credentials, key: S3_ENDPOINT}}
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+          volumeMounts:
+            - {name: storage, mountPath: /storage}
+            - {name: scripts, mountPath: /scripts}
+      volumes:
+        - name: scripts
+          configMap: {name: vm-backup-scripts}
+  volumeClaimTemplates:
+    - metadata: {name: storage}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: {requests: {storage: 5Gi}}

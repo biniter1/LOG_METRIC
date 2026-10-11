@@ -1,0 +1,17 @@
+apiVersion: 1
+datasources:
+  # Metrics đi qua vmauth -> vmselect (đã dedup)
+  - name: VictoriaMetrics
+    uid: vm
+    type: prometheus
+    access: proxy
+    url: http://vmauth:8427/select/0/prometheus
+    isDefault: true
+    jsonData:
+      timeInterval: 15s
+  # Logs đi qua vmauth -> vlogs-a (failover sang vlogs-b)
+  - name: VictoriaLogs
+    uid: vl
+    type: victoriametrics-logs-datasource
+    access: proxy
+    url: http://vmauth:8427

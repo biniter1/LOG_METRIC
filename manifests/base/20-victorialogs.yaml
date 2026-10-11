@@ -1,0 +1,197 @@
+# VictoriaLogs A và B - 2 instance single-node ĐỘC LẬP, mỗi cái giữ 1 bản đầy đủ.
+#  - Không có replication giữa A và B. Việc "nhân đôi" do vlagent làm (gửi ra cả 2).
+#  - podAntiAffinity: A và B luôn ở 2 node khác nhau.
+#  - initContainer: tự restore partition từ S3 nếu volume trống.
+#  - sidecar "backup": snapshot từng partition -> rclone lên S3, KHÔNG dừng instance.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vlogs-a
+  labels: {app: vlogs, replica: "a"}
+spec:
+  selector: {app: vlogs, replica: "a"}
+  ports:
+    - {name: http, port: 9428}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vlogs-a
+spec:
+  serviceName: vlogs-a
+  replicas: 1
+  selector:
+    matchLabels: {app: vlogs, replica: "a"}
+  template:
+    metadata:
+      labels: {app: vlogs, replica: "a"}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9428"
+    spec:
+      terminationGracePeriodSeconds: 30
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: {app: vlogs}
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: restore-if-empty
+          image: rclone/rclone
+          command: ["/bin/sh", "/scripts/vl-restore-if-empty.sh"]
+          envFrom:
+            - secretRef: {name: s3-credentials}
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: BACKUP_BUCKET
+              value: vl-backups
+          volumeMounts:
+            - {name: data, mountPath: /vlogs}
+            - {name: scripts, mountPath: /scripts}
+      containers:
+        - name: victoria-logs
+          image: victoriametrics/victoria-logs
+          args:
+            - -storageDataPath=/vlogs
+            - -retentionPeriod=7d
+            - -snapshotsMaxAge=1d
+            - -loggerFormat=json
+          ports:
+            - {name: http, containerPort: 9428}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: http}
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: data, mountPath: /vlogs}
+        - name: backup
+          image: rclone/rclone
+          command: ["/bin/sh", "/scripts/vl-backup-loop.sh"]
+          envFrom:
+            - secretRef: {name: s3-credentials}
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: BACKUP_BUCKET
+              value: vl-backups
+            - name: BACKUP_INTERVAL_SECONDS
+              value: "900"
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+          volumeMounts:
+            - {name: data, mountPath: /vlogs}
+            - {name: scripts, mountPath: /scripts}
+      volumes:
+        - name: scripts
+          configMap: {name: vl-backup-scripts}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: {requests: {storage: 5Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vlogs-b
+  labels: {app: vlogs, replica: "b"}
+spec:
+  selector: {app: vlogs, replica: "b"}
+  ports:
+    - {name: http, port: 9428}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vlogs-b
+spec:
+  serviceName: vlogs-b
+  replicas: 1
+  selector:
+    matchLabels: {app: vlogs, replica: "b"}
+  template:
+    metadata:
+      labels: {app: vlogs, replica: "b"}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9428"
+    spec:
+      terminationGracePeriodSeconds: 30
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: {app: vlogs}
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: restore-if-empty
+          image: rclone/rclone
+          command: ["/bin/sh", "/scripts/vl-restore-if-empty.sh"]
+          envFrom:
+            - secretRef: {name: s3-credentials}
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: BACKUP_BUCKET
+              value: vl-backups
+          volumeMounts:
+            - {name: data, mountPath: /vlogs}
+            - {name: scripts, mountPath: /scripts}
+      containers:
+        - name: victoria-logs
+          image: victoriametrics/victoria-logs
+          args:
+            - -storageDataPath=/vlogs
+            - -retentionPeriod=7d
+            - -snapshotsMaxAge=1d
+            - -loggerFormat=json
+          ports:
+            - {name: http, containerPort: 9428}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: http}
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: data, mountPath: /vlogs}
+        - name: backup
+          image: rclone/rclone
+          command: ["/bin/sh", "/scripts/vl-backup-loop.sh"]
+          envFrom:
+            - secretRef: {name: s3-credentials}
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: BACKUP_BUCKET
+              value: vl-backups
+            - name: BACKUP_INTERVAL_SECONDS
+              value: "900"
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+          volumeMounts:
+            - {name: data, mountPath: /vlogs}
+            - {name: scripts, mountPath: /scripts}
+      volumes:
+        - name: scripts
+          configMap: {name: vl-backup-scripts}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: {requests: {storage: 5Gi}}

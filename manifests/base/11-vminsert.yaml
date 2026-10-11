@@ -1,0 +1,61 @@
+# vminsert x2 - stateless, nhận remote write từ vmagent.
+# Không dedup. Chỉ làm 2 việc:
+#   1) hash bộ label của series -> chọn vmstorage
+#   2) replicationFactor=2 -> ghi thêm 1 bản sang node kế tiếp
+apiVersion: v1
+kind: Service
+metadata:
+  name: vminsert
+  labels: {app: vminsert}
+spec:
+  selector: {app: vminsert}
+  ports:
+    - {name: http, port: 8480}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vminsert
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: vminsert}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vminsert
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: vminsert}
+  template:
+    metadata:
+      labels: {app: vminsert}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8480"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: {app: vminsert}
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: vminsert
+          image: victoriametrics/vminsert
+          args:
+            - -storageNode=vmstorage-0.vmstorage:8400,vmstorage-1.vmstorage:8400,vmstorage-2.vmstorage:8400
+            - -replicationFactor=2
+            - -loggerFormat=json
+          ports:
+            - {name: http, containerPort: 8480}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 512Mi}

@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vmauth
+  labels: {app: vmauth}
+spec:
+  selector: {app: vmauth}
+  ports:
+    - {name: http, port: 8427}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vmauth
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: vmauth}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vmauth
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: vmauth}
+  template:
+    metadata:
+      labels: {app: vmauth}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8427"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: {app: vmauth}
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: vmauth
+          image: victoriametrics/vmauth
+          args:
+            - -auth.config=/config/vmauth.yml
+            - -loggerFormat=json
+          ports:
+            - {name: http, containerPort: 8427}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: config, mountPath: /config}
+      volumes:
+        - name: config
+          configMap: {name: vmauth-config}

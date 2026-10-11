@@ -1,0 +1,35 @@
+digraph G {
+  rankdir=LR; compound=true; newrank=true;
+  graph [fontname="DejaVu Sans", fontsize=13, pad=0.3, nodesep=0.35, ranksep=0.6, bgcolor="white"];
+  node  [fontname="DejaVu Sans", fontsize=11, shape=box, style="rounded,filled", fillcolor="#F1EFE8", color="#888780"];
+  edge  [fontname="DejaVu Sans", fontsize=10, color="#5F5E5A"];
+
+  subgraph cluster_good {
+    label=<<b>Phương án chọn: active-active + dedup</b>>; style="rounded,filled"; fillcolor="#E1F5EE"; color="#1D9E75";
+    t2 [label="Targets", shape=cylinder, fillcolor="white"];
+    b1 [label="vmagent-0", fillcolor="#9FE1CB"];
+    b2 [label="vmagent-1", fillcolor="#9FE1CB"];
+    i2 [label="vminsert"];
+    s2 [label="vmstorage / vmselect\n-dedup.minScrapeInterval=15s\n(1 sample / 15s / series)", fillcolor="#9FE1CB"];
+    t2 -> b1; t2 -> b2;
+    b1 -> i2 [label="ghi"]; b2 -> i2 [label="ghi"];
+    i2 -> s2;
+    win [label="1 agent chết → agent kia VẪN đang ghi\n= failover 0 giây, không cần đồng bộ 2 agent\ndrift giữa 2 agent bị dedup hấp thụ", shape=box, style="filled", fillcolor="#E1F5EE", color="#1D9E75", fontcolor="#085041"];
+    s2 -> win [style=invis];
+  }
+  subgraph cluster_bad {
+    label=<<b>Phương án ban đầu (LOẠI): active-passive</b>>; style="rounded,filled"; fillcolor="#FCEBEB"; color="#E24B4A";
+    t1 [label="Targets", shape=cylinder, fillcolor="white"];
+    a1 [label="vmagent-1\n(ACTIVE)", fillcolor="#F7C1C1"];
+    a2 [label="vmagent-2\n(STANDBY)\nscrape nhưng bị chặn", fillcolor="#F7C1C1"];
+    le [label="Leader election\n+ đổi remote write\n(phải tự viết)", shape=note, fillcolor="#FFF7E0"];
+    i1 [label="vminsert"];
+    t1 -> a1; t1 -> a2;
+    a1 -> i1 [label="ghi"];
+    a2 -> i1 [label="✘ chặn", style=dashed, color="#E24B4A", fontcolor="#A32D2D"];
+    le -> a2 [style=dotted, arrowhead=none];
+    gap [label="Agent-1 chết → phát hiện + bầu leader + bật ghi\n= GAP vài chục giây\n→ Tier 1 thiếu flow → NetworkPolicy chặn nhầm", shape=box, style="filled", fillcolor="#FCEBEB", color="#E24B4A", fontcolor="#791F1F"];
+    i1 -> gap [style=invis];
+  }
+
+}

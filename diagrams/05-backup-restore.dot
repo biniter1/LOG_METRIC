@@ -1,0 +1,35 @@
+digraph G {
+  rankdir=TB; newrank=true;
+  graph [fontname="DejaVu Sans", fontsize=13, pad=0.3, nodesep=0.5, ranksep=0.55, bgcolor="white"];
+  node  [fontname="DejaVu Sans", fontsize=11, shape=box, style="rounded,filled", fillcolor="white", color="#888780"];
+  edge  [fontname="DejaVu Sans", fontsize=10, color="#5F5E5A"];
+
+  subgraph cluster_vm {
+    label=<<b>Pod vmstorage-N</b>>; style="rounded,filled"; fillcolor="#EEEDFE"; color="#7F77DD";
+    vst [label="vmstorage\nAPI /snapshot/create"];
+    vbk [label="sidecar vmbackup\nincremental, mỗi 15 phút"];
+    vinit [label="initContainer vmrestore\nchạy TRƯỚC vmstorage:\nvolume trống → restore", fillcolor="#FAEEDA", color="#BA7517"];
+    vst -> vbk [label=" ① snapshot tức thời,\n không dừng ghi", dir=both];
+    vbk -> vinit [style=invis];
+  }
+  subgraph cluster_vl {
+    label=<<b>Pod vlogs-a-0 / vlogs-b-0</b>>; style="rounded,filled"; fillcolor="#E1F5EE"; color="#1D9E75";
+    lst [label="VictoriaLogs\nAPI /internal/partition/snapshot/*"];
+    lbk [label="sidecar rclone\nmỗi partition ngày, 15 phút"];
+    linit [label="initContainer rclone\nchạy TRƯỚC VictoriaLogs:\nvolume trống → copy partitions", fillcolor="#FAEEDA", color="#BA7517"];
+    lst -> lbk [label=" ① snapshot partition\n YYYYMMDD", dir=both];
+    lbk -> linit [style=invis];
+  }
+  subgraph cluster_s3 {
+    label=<<b>S3 (MinIO trong lab)</b>>; style="rounded,filled"; fillcolor="#FAEEDA"; color="#BA7517";
+    b1 [label="s3://vm-backups/\nvmstorage-N/latest", shape=cylinder];
+    b2 [label="s3://vl-backups/\nvlogs-X-0/YYYYMMDD/", shape=cylinder];
+    b3 [label="s3://vl-backups/resync/YYYYMMDD/\n(script bù partition giữa A ↔ B)", shape=cylinder];
+  }
+  vbk -> b1 [label=" ② upload part mới", color="#BA7517", fontcolor="#854F0B"];
+  lbk -> b2 [label=" ② rclone sync", color="#BA7517", fontcolor="#854F0B"];
+  b1 -> vinit [label=" ③ khi mất PVC", style=dashed, color="#A32D2D", fontcolor="#A32D2D"];
+  b2 -> linit [label=" ③ khi mất PVC", style=dashed, color="#A32D2D", fontcolor="#A32D2D"];
+  {rank=same; vinit; linit;}
+  {rank=same; b1; b2; b3;}
+}

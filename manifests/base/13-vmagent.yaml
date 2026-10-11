@@ -1,0 +1,109 @@
+# vmagent x2 - ACTIVE-ACTIVE.
+#  - Cả 2 replica cùng config, cùng scrape mọi target, cùng remote write.
+#  - Không leader election, không chặn replica nào -> failover = 0 giây.
+#  - Persistent queue trên PVC: vminsert down thì buffer xuống đĩa, lên lại thì gửi bù.
+#  - StatefulSet (không phải Deployment) để mỗi replica có PVC buffer riêng, ổn định.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vmagent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vmagent-lab
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/metrics, services, endpoints, pods]
+    verbs: [get, list, watch]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - nonResourceURLs: ["/metrics"]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vmagent-lab
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vmagent-lab
+subjects:
+  - kind: ServiceAccount
+    name: vmagent
+    namespace: observability
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vmagent
+  labels: {app: vmagent}
+spec:
+  clusterIP: None
+  selector: {app: vmagent}
+  ports:
+    - {name: http, port: 8429}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vmagent
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: vmagent}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vmagent
+spec:
+  serviceName: vmagent
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: {app: vmagent}
+  template:
+    metadata:
+      labels: {app: vmagent}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8429"
+    spec:
+      serviceAccountName: vmagent
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: {app: vmagent}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: vmagent
+          image: victoriametrics/vmagent
+          args:
+            - -promscrape.config=/config/scrape.yml
+            - -remoteWrite.url=http://vminsert:8480/insert/0/prometheus/api/v1/write
+            - -remoteWrite.tmpDataPath=/buffer
+            - -remoteWrite.maxDiskUsagePerURL=1GB
+            - -loggerFormat=json
+          ports:
+            - {name: http, containerPort: 8429}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: config, mountPath: /config}
+            - {name: buffer, mountPath: /buffer}
+      volumes:
+        - name: config
+          configMap: {name: vmagent-config}
+  volumeClaimTemplates:
+    - metadata: {name: buffer}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: {requests: {storage: 2Gi}}

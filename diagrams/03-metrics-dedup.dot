@@ -1,0 +1,34 @@
+digraph G {
+  rankdir=TB; newrank=true;
+  graph [fontname="DejaVu Sans", fontsize=13, pad=0.3, nodesep=0.4, ranksep=0.45, bgcolor="white"];
+  node  [fontname="DejaVu Sans", fontsize=11, shape=box, style="rounded,filled", fillcolor="white", color="#888780"];
+  edge  [fontname="DejaVu Sans", fontsize=10, color="#5F5E5A"];
+
+  target [label="Series: flow_total{src=\"A\",dst=\"B\"}   scrape_interval = 15s", shape=box, style="filled", fillcolor="#F1EFE8"];
+  a0 [label="vmagent-0\nt=10.2s  value=100", fillcolor="#EEEDFE", color="#7F77DD"];
+  a1 [label="vmagent-1\nt=10.6s  value=100", fillcolor="#EEEDFE", color="#7F77DD"];
+  target -> a0; target -> a1;
+
+  ins [label="① vminsert — KHÔNG dedup\nhash(label) giống nhau → cùng node chính\nRF=2 → ghi thêm 1 bản sang node kế tiếp", fillcolor="#EEEDFE", color="#7F77DD"];
+  a0 -> ins; a1 -> ins;
+
+  subgraph cluster_before {
+    label="② Trên đĩa, ngay sau khi ghi"; style="rounded,dashed"; color="#B4B2A9";
+    n1 [label="vmstorage-1\n[t=10.2, t=10.6]"];
+    n2 [label="vmstorage-2\n[t=10.2, t=10.6]"];
+    n0 [label="vmstorage-0\n(series này không ở đây)", fontcolor="#888780"];
+  }
+  ins -> n1 [label="bản chính"]; ins -> n2 [label="bản replica"];
+
+  subgraph cluster_after {
+    label="③ vmstorage merge nền + dedup 15s (xử lý trùng do 2 AGENT)"; style="rounded,dashed"; color="#1D9E75";
+    m1 [label="vmstorage-1\n[t=10.6]", fillcolor="#E1F5EE", color="#1D9E75"];
+    m2 [label="vmstorage-2\n[t=10.6]", fillcolor="#E1F5EE", color="#1D9E75"];
+  }
+  n1 -> m1; n2 -> m2;
+
+  sel [label="④ vmselect dedup 15s khi query (xử lý trùng do REPLICATION)\nnhận 2 bản từ 2 node → trả 1 sample", fillcolor="#EEEDFE", color="#7F77DD"];
+  m1 -> sel; m2 -> sel;
+  out [label="Grafana / Tier 1 thấy: 1 sample (t=10.6, value=100)\nTrên đĩa vẫn giữ 2 bản để chịu lỗi", style="filled", fillcolor="#E1F5EE", color="#1D9E75"];
+  sel -> out;
+}

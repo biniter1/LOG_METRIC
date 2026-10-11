@@ -1,0 +1,17 @@
+# Cụm lab: 1 control-plane + 3 worker.
+# 3 worker là BẮT BUỘC: vmstorage x3 dùng podAntiAffinity "required",
+# mỗi node chỉ chứa 1 vmstorage -> mất 1 node = mất đúng 1 bản replica.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: vmvl-lab
+nodes:
+  - role: control-plane
+  - role: worker
+    labels:
+      lab/zone: zone-a
+  - role: worker
+    labels:
+      lab/zone: zone-b
+  - role: worker
+    labels:
+      lab/zone: zone-c

@@ -1,0 +1,76 @@
+# MinIO đóng vai S3 trong lab. Single-node, KHÔNG HA - chỉ là "cold storage" giả lập.
+# Khi lên AWS: bỏ file này, đổi S3_ENDPOINT/credential trong 01-s3-credentials.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  labels: {app: minio}
+spec:
+  selector: {app: minio}
+  ports:
+    - {name: api, port: 9000, targetPort: 9000}
+    - {name: console, port: 9001, targetPort: 9001}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+spec:
+  serviceName: minio
+  replicas: 1
+  selector:
+    matchLabels: {app: minio}
+  template:
+    metadata:
+      labels: {app: minio}
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom: {secretKeyRef: {name: s3-credentials, key: AWS_ACCESS_KEY_ID}}
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: {secretKeyRef: {name: s3-credentials, key: AWS_SECRET_ACCESS_KEY}}
+          ports:
+            - {containerPort: 9000, name: api}
+            - {containerPort: 9001, name: console}
+          readinessProbe:
+            httpGet: {path: /minio/health/ready, port: 9000}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: {requests: {storage: 5Gi}}
+---
+# Job tạo bucket. Idempotent: chạy lại không lỗi.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-create-buckets
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              until mc alias set lab "$S3_ENDPOINT" "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY"; do
+                echo "waiting for minio..."; sleep 3
+              done
+              mc mb --ignore-existing lab/vm-backups
+              mc mb --ignore-existing lab/vl-backups
+              mc ls lab
+          envFrom:
+            - secretRef: {name: s3-credentials}

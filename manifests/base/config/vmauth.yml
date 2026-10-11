@@ -1,0 +1,22 @@
+# vmauth = MỘT endpoint đọc duy nhất cho Grafana và Tier 1.
+# Client không cần biết topology phía sau.
+unauthorized_user:
+  url_map:
+    # ---- Metrics: 2 vmselect stateless, cân bằng tải ----
+    - src_paths:
+        - "/select/0/prometheus/.*"
+        - "/select/0/vmui.*"
+      url_prefix:
+        - "http://vmselect:8481"
+
+    # ---- Logs: A trước, A lỗi -> tự chuyển B (failover) ----
+    # first_available: luôn ưu tiên backend đầu tiên còn sống.
+    # Ưu tiên A giúp kết quả query ỔN ĐỊNH (không nhảy qua lại giữa A/B).
+    - src_paths:
+        - "/select/logsql/.*"
+        - "/select/vmui.*"
+      url_prefix:
+        - "http://vlogs-a:9428"
+        - "http://vlogs-b:9428"
+      load_balancing_policy: first_available
+      retry_status_codes: [500, 502, 503, 504]

@@ -1,0 +1,45 @@
+# Grafana chỉ để quan sát trong lab (không thuộc đường dữ liệu chính).
+# Plugin VictoriaLogs được cài tự động khi khởi động (cần Internet).
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  labels: {app: grafana}
+spec:
+  selector: {app: grafana}
+  ports:
+    - {name: http, port: 3000}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: grafana}
+  template:
+    metadata:
+      labels: {app: grafana}
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana
+          env:
+            - {name: GF_SECURITY_ADMIN_USER, value: admin}
+            - {name: GF_SECURITY_ADMIN_PASSWORD, value: admin}
+            - {name: GF_INSTALL_PLUGINS, value: victoriametrics-logs-datasource}
+            - {name: GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS, value: victoriametrics-logs-datasource}
+          ports:
+            - {name: http, containerPort: 3000}
+          readinessProbe:
+            httpGet: {path: /api/health, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+      volumes:
+        - name: datasources
+          configMap: {name: grafana-datasources}

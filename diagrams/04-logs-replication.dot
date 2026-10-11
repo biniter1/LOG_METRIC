@@ -1,0 +1,30 @@
+digraph G {
+  rankdir=LR; newrank=true;
+  graph [fontname="DejaVu Sans", fontsize=13, pad=0.3, nodesep=0.35, ranksep=0.6, bgcolor="white"];
+  node  [fontname="DejaVu Sans", fontsize=11, shape=box, style="rounded,filled", fillcolor="white", color="#888780"];
+  edge  [fontname="DejaVu Sans", fontsize=10, color="#5F5E5A"];
+
+  subgraph cluster_node {
+    label=<<b>Mỗi Kubernetes node</b>>; style="rounded,filled"; fillcolor="#F1EFE8"; color="#B4B2A9";
+    files [label="/var/log/containers/*.log\n(file log trên đĩa node\n= bộ đệm tự nhiên)", shape=folder];
+    subgraph cluster_agent {
+      label="vlagent (DaemonSet)"; style="rounded,filled"; fillcolor="#E1F5EE"; color="#1D9E75";
+      ck [label="checkpoint offset\n(hostPath)", shape=note, fillcolor="#FFF7E0"];
+      qa [label="buffer → A\n(max 1GB)", shape=cylinder, fillcolor="#FAEEDA"];
+      qb [label="buffer → B\n(max 1GB)", shape=cylinder, fillcolor="#FAEEDA"];
+    }
+    files -> ck [label="tail"];
+    ck -> qa; ck -> qb;
+  }
+  A [label="vlogs-a\nnhận ĐÚNG 1 bản", fillcolor="#E1F5EE", color="#1D9E75"];
+  B [label="vlogs-b\nnhận ĐÚNG 1 bản", fillcolor="#E1F5EE", color="#1D9E75"];
+  qa -> A [label="/insert/native"];
+  qb -> B [label="/insert/native"];
+  auth [label="vmauth\nfirst_available\nA lỗi → B", fillcolor="#F1EFE8"];
+  A -> auth; B -> auth [style=dashed];
+  t1 [label="Tier 1 / Grafana", fillcolor="#F1EFE8"];
+  auth -> t1;
+
+  label="Không có 2 collector cùng đọc 1 file → không có duplicate có hệ thống → KHÔNG cần dedup.\nB down: buffer B phình, A vẫn nhận; B lên lại: vlagent đẩy bù.  Restart vlagent: đọc tiếp từ checkpoint.";
+  labelloc=b; fontsize=12; fontcolor="#444441";
+}

@@ -1,0 +1,18 @@
+digraph G {
+  rankdir=TB; newrank=true;
+  graph [fontname="DejaVu Sans", fontsize=13, pad=0.3, nodesep=0.15, ranksep=0.4, bgcolor="white"];
+  node  [fontname="DejaVu Sans", fontsize=10, shape=box, style="rounded,filled", fillcolor="white", color="#888780", width=1.5];
+  edge  [style=invis];
+
+  subgraph cluster_w1 { label=<<b>worker-1 (zone-a)</b>>; style="rounded,filled"; fillcolor="#F1EFE8"; color="#888780";
+    s0 [label="vmstorage-0", fillcolor="#EEEDFE"]; g0 [label="vmagent-0", fillcolor="#EEEDFE"]; la [label="vlogs-a-0", fillcolor="#E1F5EE"]; d1 [label="vlagent", fillcolor="#E1F5EE"];
+    s0 -> g0 -> la -> d1; }
+  subgraph cluster_w2 { label=<<b>worker-2 (zone-b)</b>>; style="rounded,filled"; fillcolor="#F1EFE8"; color="#888780";
+    s1 [label="vmstorage-1", fillcolor="#EEEDFE"]; g1 [label="vmagent-1", fillcolor="#EEEDFE"]; lb [label="vlogs-b-0", fillcolor="#E1F5EE"]; d2 [label="vlagent", fillcolor="#E1F5EE"];
+    s1 -> g1 -> lb -> d2; }
+  subgraph cluster_w3 { label=<<b>worker-3 (zone-c)</b>>; style="rounded,filled"; fillcolor="#F1EFE8"; color="#888780";
+    s2 [label="vmstorage-2", fillcolor="#EEEDFE"]; m [label="minio-0", fillcolor="#FAEEDA"]; x [label="(stateless: vminsert,\nvmselect, vmauth, grafana\nrải đều 3 node)", fillcolor="white"]; d3 [label="vlagent", fillcolor="#E1F5EE"];
+    s2 -> m -> x -> d3; }
+  label="Bắt buộc khác node (required anti-affinity): vmstorage x3 · vmagent x2 · vlogs-a/vlogs-b\nMất 1 node bất kỳ = mất tối đa 1 replica của mỗi thành phần. Vị trí cụ thể do scheduler quyết định."; labelloc=b; fontsize=12;
+  {rank=same; s0; s1; s2;}
+}
